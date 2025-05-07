@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import copy
 
 ## TODO senzory: Funkce ktere koukaji na zbytek hry
 # distance to mines
@@ -149,25 +150,19 @@ def reset_mes(mes, pop):
 # TODO
 
 def mine_directional_threat_sensor(me: Me, mines, steps=15):
-    me_center = me.rect.center
-
     threat_score = 0.0
 
     for mine in mines:
-        # Simulate movement steps
-        future_mine = mine.rect.copy()
+        future_mine = copy.deepcopy(mine)
 
         for step in range(1, steps + 1):
-            future_mine.x += mine.dirx * mine.velocity
-            future_mine.y += mine.diry * mine.velocity
-
-            # Estimate our own possible movement range (assuming worst-case: we don't dodge)
-            expanded_me = me.rect.inflate(ME_VELOCITY * step * 2, ME_VELOCITY * step * 2)
+            handle_mine_movement(future_mine)
+            expanded_me = me.rect.inflate(ME_VELOCITY * step * 3, ME_VELOCITY * step * 3)
 
             if expanded_me.colliderect(future_mine):
                 score = 1.0 - (step / steps)
-                threat_score = max(threat_score, score)
-                break  # No need to simulate further for this mine
+                threat_score = max(threat_score, score * 10)
+                break
     return threat_score
 
 def mine_dodge_probabilities(me: Me, mines: list[Mine], steps=15) -> list[float]:
@@ -178,7 +173,7 @@ def mine_dodge_probabilities(me: Me, mines: list[Mine], steps=15) -> list[float]
         3: (ME_VELOCITY, 0)    # right
     }
 
-    safety = [1.0, 1.0, 1.0, 1.0]  # start with "safe" for all
+    safety = [1.0, 1.0, 1.0, 1.0]
 
     for dir_index, (dx, dy) in directions.items():
         # Simulate Me's future path if it moves in this direction
@@ -204,6 +199,14 @@ def mine_dodge_probabilities(me: Me, mines: list[Mine], steps=15) -> list[float]
                         break  # stop checking this mine for this step
 
     return safety  # values between 0 (certain death) and 1 (safe)
+
+def nearest_mine_distance(me: Me, mines: list[Mine]):
+    shortest_distance = math.inf
+    for mine in mines:
+        tmp = math.hypot(mine.rect.x - me.rect.x, mine.rect.y - me.rect.y)
+        if  tmp < shortest_distance:
+            shortest_distance = tmp
+    return shortest_distance;
 
 def flag_distance(me: Me, flag: Flag):
     return math.dist(me.rect.center, flag.rect.center)
@@ -379,6 +382,9 @@ def activ_sinh(x):
 def activ_tanh(x):
     return np.tanh(x)
 
+def temp_tanh(x):
+    return np.tanh(x/400) * 350
+
 def get_weights(wei):
     return np.array(wei[:4 * 4]).reshape((4, 4)), np.array(wei[4 * 4:]).reshape((4, 4))
 
@@ -388,14 +394,15 @@ def get_weights(wei):
 def nn_function(inp, wei):
     inputs = np.array(inp)  # shape: (5,)
 
-    w1 = np.array(wei[:48]).reshape((6, 8))         # input -> hidden1
-    w2 = np.array(wei[48:84]).reshape((6, 6))       # hidden1 -> hidden2
-    w3 = np.array(wei[84:]).reshape((4, 6))         # hidden2 -> output
+    w1 = np.array(wei[:15]).reshape((5, 3))         # input -> hidden1
+    w2 = np.array(wei[15:40]).reshape((5, 5))       # hidden1 -> hidden2
+    w3 = np.array(wei[40:]).reshape((4, 5))         # hidden2 -> output
 
-    h1 = activ_sin(w1 @ inputs)    # shape: (6,)
-    h2 = activ_tanh(w2 @ h1)        # shape: (4,)
-    output = w3 @ h2               # shape: (4,)
-
+    if inputs[1] != 0:
+        print(inputs)
+    h1 = temp_tanh(w1 @ inputs)    # shape: (6,)
+    h2 = activ_sin(w2 @ h1)        # shape: (4,)
+    output = (w3 @ h2)               # shape: (4,)
     return int(np.argmax(output))
 
 # naviguje jedince pomocí neuronové sítě a jeho vlastní sekvence v něm schované
@@ -442,11 +449,12 @@ def handle_mes_movement(mes, mines, flag):
             # naplnit vstup in vstupy ze senzorů
             inp = []
 
-            inp.append(right_distance(me))
-            inp.append(top_distance(me))
+            #inp.append(right_distance(me))
+            #inp.append(top_distance(me))
             inp.append(flag_distance(me, flag))
             inp.append(mine_directional_threat_sensor(me, mines, 10))
-            inp.extend(mine_dodge_probabilities(me, mines))
+           # inp.extend(mine_dodge_probabilities(me, mines, 10))
+            inp.append(nearest_mine_distance(me, mines))
 
             nn_navigate_me(me, inp)
 
@@ -474,9 +482,9 @@ def corner_penalty(me: Me, threshold=80):
     for cx, cy in corners:
         dist = math.hypot(cx - me_x, cy - me_y)
         if dist < threshold:
-            penalty += (threshold - dist)  # stronger penalty the closer you are
+            penalty += (threshold - dist)
 
-    return penalty * 2  # tweak this multiplier as needed
+    return penalty * 5
 
 # funkce pro výpočet fitness všech jedinců
 def handle_mes_fitnesses(mes: list[Me]):
@@ -498,15 +506,15 @@ def handle_mes_fitnesses(mes: list[Me]):
 
         # 1. Win bonus & time penalty
         if me.won:
-            bonus = 200
+            bonus = 50
             #penalty = me.timealive * 0.2
             score += bonus
             #score -= penalty
             total_scores["win_bonus"] += bonus
             #total_scores["win_penalty"] += penalty
         if me.alive:
-            total_scores["survival_reward"] += 100
-            score += 100
+            total_scores["survival_reward"] += 85
+            score += 25
 
         # 2. Movement reward
         movement = me.dist * 0.01
@@ -521,32 +529,31 @@ def handle_mes_fitnesses(mes: list[Me]):
         # 4. Diagonal movement bonus
         diagonal_alignment = 1 - abs(me_x - 1.8 * me_y) / WIDTH
         progress_reward = (me_x / WIDTH) + (me_y / HEIGHT)
-        diagonal_bonus = diagonal_alignment * progress_reward * 50
-        score += diagonal_bonus
+        diagonal_bonus = diagonal_alignment * progress_reward * 20
+        #score += diagonal_bonus
         total_scores["diagonal_bonus"] += diagonal_bonus
 
         # 5. Flag proximity reward
         goal_x = WIDTH - ME_SIZE
         goal_y = HEIGHT - ME_SIZE
-        dist_to_flag = math.hypot(goal_x - me_x, (goal_y - me_y) * 1.8)
+        dist_to_flag = math.hypot(goal_x - me_x, (goal_y - me_y) * 2)
         max_dist = math.hypot(WIDTH, HEIGHT)
-        flag_reward = (1 - dist_to_flag / max_dist) * 80
+        flag_reward = (1 - dist_to_flag / max_dist) * 30
         score += flag_reward
         total_scores["flag_proximity_reward"] += flag_reward
 
-        # 6. Start zone penalty
+        # 5. Start zone penalty
         dist_from_start = math.dist((5, 10), (me_x, me_y))
         start_penalty = max(0, HEIGHT + 50 - dist_from_start) * 0.5
         score -= start_penalty
         total_scores["start_zone_penalty"] += start_penalty
 
-        # 7. Corner penalty
+        # 6. Corner penalty
         total_scores["corner_penalty"] += corner_penalty(me)
         score -= corner_penalty(me, threshold=80)
 
         me.fitness = score
 
-    # After all are processed, print averages
     n = len(mes)
     print("=== Fitness Category Averages ===")
     for key, total in total_scores.items():
@@ -564,6 +571,8 @@ def update_hof(hof, mes):
     # print(w2)
     hof.sequence = mes[ind].sequence.copy()
 
+def temp_rand():
+    return (random.random() * 2) - 1
 
 # ----------------------------------------------------------------------------
 # main loop
@@ -573,9 +582,9 @@ def main():
     # =====================================================================
     # <----- ZDE Parametry nastavení evoluce !!!!!
 
-    VELIKOST_POPULACE = 10
+    VELIKOST_POPULACE = 50
     EVO_STEPS = 5  # pocet kroku evoluce
-    DELKA_JEDINCE = 108  # <--------- záleží na počtu vah a prahů u neuronů !!!!!
+    DELKA_JEDINCE = 60  # <--------- záleží na počtu vah a prahů u neuronů !!!!!
     NGEN = 800  # počet generací
     CXPB = 0.6  # pravděpodobnost crossoveru na páru
     MUTPB = 0.2  # pravděpodobnost mutace
@@ -587,12 +596,12 @@ def main():
 
     toolbox = base.Toolbox()
 
-    toolbox.register("attr_rand", random.random)
+    toolbox.register("attr_rand", temp_rand)
     toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_rand, DELKA_JEDINCE)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
     # vlastni random mutace
-    def custom_mutate(individual, indpb, mutation_strength=0.3):
+    def custom_mutate(individual, indpb, mutation_strength=0.5):
         for i in range(len(individual)):
             if random.random() < indpb:
                 delta = random.uniform(-mutation_strength, mutation_strength)
@@ -621,7 +630,7 @@ def main():
 
     run = True
 
-    level = 1  # <--- ZDE nastavení obtížnosti počtu min !!!!!
+    level = 5  # <--- ZDE nastavení obtížnosti počtu min !!!!!
     generation = 0
 
     evolving = True
