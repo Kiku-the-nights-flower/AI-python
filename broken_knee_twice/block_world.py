@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import math
 
 import pygame
 import random
@@ -11,6 +11,8 @@ from collections import deque
 
 
 BLOCKTYPES = 5
+
+type Tile = tuple[int, int]
 
 
 # třída reprezentující prostředí
@@ -66,38 +68,65 @@ class Env:
             l.append((x, y+1))
         
         return l
-        
-     
+
     def get_tile_type(self, x, y):
         return self.arr[y, x]
-    
+
+
+    def astar(self, start: tuple[int, int], finish: tuple[int, int]) -> tuple[deque[tuple[int, int]], list[tuple[int, int]]]:
+        return ((), list(()))
+
+    def greed(self, start: tuple[int, int]) -> tuple[deque[tuple[int, int]], list[tuple[int, int]]]:
+        path: deque[Tile] = deque()
+        unpacked: list[Tile] = list()
+        unpacked.append(start)
+        found_finish = False
+
+        def goal_distance(tile: Tile) -> float:
+            if not self.is_valid_xy(tile[0], tile[1]):
+                return math.inf
+            return math.dist(tile, (self.goalx, self.goaly))
+
+        def eval_tiles(tiles: list[Tile]) -> list[float]:
+            values = list()
+            for tile in tiles:
+                values.append(goal_distance(tile))
+            return values
+
+        def choose_tile(tiles: list[Tile], goal_values: list[float]) -> Tile | None:
+            chosen_tile = None
+            chosen_value = math.inf
+            for i in range(len(tiles)):
+                if tiles[i] not in unpacked and (chosen_tile is None or goal_values[i] <= chosen_value) :
+                    chosen_tile = tiles[i]
+                    chosen_value = goal_values[i]
+            return chosen_tile
+
+        while not found_finish:
+            last_step = path[len(path) - 1] if len(path) > 0 else start
+            surround_tiles = self.get_neighbors(last_step[0], last_step[1])
+            surround_values = eval_tiles(surround_tiles)
+            tile = choose_tile(surround_tiles, surround_values)
+            if tile is None:
+                path.pop()
+            else:
+                path.append(tile)
+                unpacked.append(tile)
+
+            if tile == (self.goalx, self.goaly):
+                break
+        return path, list(unpacked)
+
+    def djikstra(self, start: tuple[int, int], finish: tuple[int, int]) -> tuple[deque[tuple[int, int], list[tuple[int, int]]]]:
+        return ((), list(()))
+
     
     # vrací dvojici 1. frontu dvojic ze startu do cíle, 2. seznam dlaždic
     # k zobrazení - hodí se např. pro zvýraznění cesty, nebo expandovaných uzlů
     # start a cíl se nastaví pomocí set_start a set_goal
     # <------    ZDE vlastní metoda
     def path_planner(self):
-        
-        # přímo zadrátovaná cesta z bodu (1, 0) do (9, 7)
-        d = deque()
-        d.appendleft((9, 7))
-        d.appendleft((9, 6))
-        d.appendleft((9, 5))
-        d.appendleft((9, 4))
-        d.appendleft((9, 3))
-        d.appendleft((9, 2))
-        d.appendleft((9, 1))
-        d.appendleft((9, 0))
-        d.appendleft((8, 0))
-        d.appendleft((7, 0))
-        d.appendleft((6, 0))
-        d.appendleft((5, 0))
-        d.appendleft((4, 0))
-        d.appendleft((3, 0))
-        d.appendleft((2, 0))
-        d.appendleft((1, 0))
-                
-        return d, list(d)
+        return self.greed((self.startx, self.starty))
     
        
         
@@ -293,8 +322,8 @@ def main():
     env.set_goal(9, 7)
     
     
-    #p, t = env.path_planner()   # cesta pomocí path_planneru prostředí
-    #ufo.set_path(p, t)
+    p, t = env.path_planner()   # cesta pomocí path_planneru prostředí
+    ufo.set_path(p, t)
     # ---------------------------------------------------
     
     
@@ -312,7 +341,7 @@ def main():
         if (ufo.x != env.goalx) or (ufo.y != env.goaly):        
             x, y = ufo.reactive_go(env)
             
-            #x, y = ufo.execute_path()
+            x, y = ufo.execute_path()
             
             if env.is_valid_xy(x, y):
                 ufo.move(x, y)
